@@ -1,1009 +1,476 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Generative Circle Art - Three.js</title>
+    <title>Fluid Simulation Generative Art</title>
     <style>
       body {
         margin: 0;
-        padding: 0;
         overflow: hidden;
-        background: #fff;
-        font-family: 'Courier New', monospace;
       }
-
       canvas {
         display: block;
-      }
-
-      .controls {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: rgba(0, 0, 0, 0.8);
-        padding: 15px;
-        border-radius: 10px;
-        color: #00e5ff;
-        border: 2px solid #00e5ff;
-        box-shadow: 0 0 20px rgba(0, 229, 255, 0.5);
-        width: 280px;
-      }
-
-      .controls h3 {
-        margin: 0 0 15px 0;
-        text-align: center;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        text-shadow: 0 0 10px currentColor;
-      }
-
-      .control-group {
-        margin: 10px 0;
-      }
-
-      .control-group label {
-        display: block;
-        margin-bottom: 5px;
-        font-size: 12px;
-        color: #fff200;
-        text-shadow: 0 0 5px currentColor;
-      }
-
-      .control-group input[type='range'] {
-        width: 100%;
-        -webkit-appearance: none;
-        height: 5px;
-        background: linear-gradient(90deg, #ff2ed1, #00e5ff, #00ff8c);
-        outline: none;
-        border-radius: 5px;
-      }
-
-      .control-group input[type='range']::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 15px;
-        height: 15px;
-        background: #fff200;
-        cursor: pointer;
-        border-radius: 50%;
-        box-shadow: 0 0 10px #fff200;
-      }
-
-      button {
-        width: 100%;
-        padding: 10px;
-        margin: 5px 0;
-        background: linear-gradient(45deg, #ff2ed1, #3f48ff);
-        border: none;
-        color: white;
-        font-weight: bold;
-        border-radius: 5px;
-        cursor: pointer;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        transition: all 0.3s;
-        font-family: 'Courier New', monospace;
-      }
-
-      button:hover {
-        transform: scale(1.05);
-        box-shadow: 0 0 20px rgba(255, 46, 209, 0.5);
-      }
-
-      .info {
-        position: absolute;
-        bottom: 10px;
-        left: 10px;
-        color: #666;
-        font-size: 14px;
-        background: rgba(255, 255, 255, 0.9);
-        padding: 10px;
-        border-radius: 5px;
-        border: 1px solid #ccc;
-      }
-
-      .value-display {
-        color: #ff8a00;
-        float: right;
-        font-weight: bold;
       }
     </style>
   </head>
   <body>
-    <div class="controls">
-      <h3>アートパラメータ</h3>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      // Setup
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const aspect = width / height;
+      const simRes = 512; // Simulation resolution (square for simplicity)
 
-      <div class="control-group">
-        <label
-          >流体速度 <span class="value-display" id="speed-value">2</span></label
-        >
-        <input type="range" id="speed" min="0.5" max="8" step="0.5" value="2" />
-      </div>
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(width, height);
+      document.body.appendChild(renderer.domElement);
 
-      <div class="control-group">
-        <label
-          >拡散強度
-          <span class="value-display" id="diffusion-value">0.8</span></label
-        >
-        <input
-          type="range"
-          id="diffusion"
-          min="0.1"
-          max="2"
-          step="0.1"
-          value="0.8"
-        />
-      </div>
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-      <div class="control-group">
-        <label
-          >色強度
-          <span class="value-display" id="color-intensity-value">2</span></label
-        >
-        <input
-          type="range"
-          id="color-intensity"
-          min="0.5"
-          max="4"
-          step="0.1"
-          value="2"
-        />
-      </div>
+      const quad = new THREE.PlaneBufferGeometry(2, 2);
 
-      <button id="reset">リセット</button>
-      <button id="capture">画像を保存 (Sキー)</button>
-      <div
-        style="
-          margin-top: 10px;
-          font-size: 11px;
-          color: #00ff8c;
-          text-align: center;
-        "
-      >
-        ※保存がうまくいかない場合は<br />右クリック→「画像を保存」でも可能
-      </div>
-    </div>
+      // Scenes
+      const simScene = new THREE.Scene();
+      const displayScene = new THREE.Scene();
 
-    <div class="info">
-      中央の円から色が押し出されるgenerative art | Sキーで画像保存<br />
-      <span style="font-size: 12px; opacity: 0.8"
-        >色は1秒ごとにサイクル変化</span
-      >
-    </div>
+      const simMesh = new THREE.Mesh(quad);
+      simScene.add(simMesh);
 
-    <script type="module">
-      import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js';
+      const displayMesh = new THREE.Mesh(quad);
+      displayScene.add(displayMesh);
 
-      let fluid,
-        paint,
-        count = 0,
-        canvas;
-      let params = {
-        speed: 2,
-        diffusion: 0.8,
-        colorIntensity: 2,
-        time: 0,
-      };
+      // Helper functions
+      function createRenderTarget() {
+        return new THREE.WebGLRenderTarget(simRes, simRes, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.FloatType,
+        });
+      }
 
-      // カラーサイクル
+      // Buffers
+      let velocity1 = createRenderTarget();
+      let velocity2 = createRenderTarget();
+      let density1 = createRenderTarget();
+      let density2 = createRenderTarget();
+      let pressure1 = createRenderTarget();
+      let pressure2 = createRenderTarget();
+      let divergence = createRenderTarget();
+
+      // Shaders
+      const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+      // Simplex noise
+      const simplexNoise = `
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+
+            float snoise(vec2 v) {
+                const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                    -0.577350269189626, 0.024390243902439);
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v -   i + dot(i, C.xx);
+                vec2 i1;
+                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                vec4 x12 = x0.xyxy + C.xxzz;
+                x12.xy -= i1;
+                i = mod289(i);
+                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
+                + i.x + vec3(0.0, i1.x, 1.0 ));
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+                    dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ;
+                m = m*m ;
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+                vec3 g;
+                g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                return 130.0 * dot(m, g);
+            }
+        `;
+
+      // Initial velocity shader (random flow)
+      const initVelocityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+                varying vec2 vUv;
+                ${simplexNoise}
+                void main() {
+                    float n1 = snoise(vUv * 10.0);
+                    float n2 = snoise(vUv * 10.0 + vec2(5.0));
+                    vec2 vel = vec2(n1, n2) * 0.05; // Small random velocity
+                    gl_FragColor = vec4(vel, 0.0, 0.0);
+                }
+            `,
+        uniforms: {},
+      });
+
+      // Initial density (black)
+      const initDensityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+                varying vec2 vUv;
+                void main() {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                }
+            `,
+        uniforms: {},
+      });
+
+      // Advection shader with dissipation
+      const advectionFragment = `
+            uniform sampler2D uTexture;
+            uniform sampler2D uVelocity;
+            uniform vec2 uResolution;
+            uniform float uDt;
+            uniform float uDissipation;
+            varying vec2 vUv;
+
+            vec4 bilerp(sampler2D tex, vec2 uv) {
+                vec2 st = uv * uResolution - 0.5;
+                vec2 i = floor(st);
+                vec2 f = fract(st);
+                vec4 a = texture2D(tex, (i + vec2(0.5, 0.5)) / uResolution);
+                vec4 b = texture2D(tex, (i + vec2(1.5, 0.5)) / uResolution);
+                vec4 c = texture2D(tex, (i + vec2(0.5, 1.5)) / uResolution);
+                vec4 d = texture2D(tex, (i + vec2(1.5, 1.5)) / uResolution);
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
+
+            void main() {
+                vec2 vel = texture2D(uVelocity, vUv).xy;
+                vec2 pos = vUv - vel * uDt;
+                gl_FragColor = bilerp(uTexture, pos) * uDissipation;
+            }
+        `;
+      const advectionMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: advectionFragment,
+        uniforms: {
+          uTexture: { value: null },
+          uVelocity: { value: null },
+          uResolution: { value: new THREE.Vector2(simRes, simRes) },
+          uDt: { value: 0.016 },
+          uDissipation: { value: 1.0 },
+        },
+      });
+
+      // Divergence shader
+      const divergenceFragment = `
+            uniform sampler2D uVelocity;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uVelocity, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uVelocity, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uVelocity, vUv - vec2(0.0, uTexelSize.y)).y;
+                float T = texture2D(uVelocity, vUv + vec2(0.0, uTexelSize.y)).y;
+                float div = 0.5 * (R - L + T - B);
+                gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
+            }
+        `;
+      const divergenceMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: divergenceFragment,
+        uniforms: {
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Jacobi pressure shader
+      const pressureFragment = `
+            uniform sampler2D uPressure;
+            uniform sampler2D uDivergence;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
+                float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
+                float div = texture2D(uDivergence, vUv).x;
+                float p = (L + R + B + T - div) * 0.25;
+                gl_FragColor = vec4(p, 0.0, 0.0, 1.0);
+            }
+        `;
+      const pressureMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: pressureFragment,
+        uniforms: {
+          uPressure: { value: null },
+          uDivergence: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Gradient subtract shader
+      const gradientSubtractFragment = `
+            uniform sampler2D uPressure;
+            uniform sampler2D uVelocity;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
+                float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
+                vec2 vel = texture2D(uVelocity, vUv).xy;
+                vel.x -= 0.5 * (R - L);
+                vel.y -= 0.5 * (T - B);
+                gl_FragColor = vec4(vel, 0.0, 1.0);
+            }
+        `;
+      const gradientSubtractMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: gradientSubtractFragment,
+        uniforms: {
+          uPressure: { value: null },
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Splat shader for density (add color with stronger intensity)
+      const splatDensityFragment = `
+            uniform sampler2D uDensity;
+            uniform vec3 uColor;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            uniform float uAspect;
+            varying vec2 vUv;
+            void main() {
+                vec4 current = texture2D(uDensity, vUv);
+                vec2 p = vUv - uCenter;
+                p.x *= uAspect;
+                float d = length(p);
+                if (d < uRadius) {
+                    float a = exp(-d * d / (uRadius * uRadius)) * 1.0; // Increased intensity
+                    current.rgb = mix(current.rgb, uColor, a);
+                }
+                gl_FragColor = current;
+            }
+        `;
+      const splatDensityMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: splatDensityFragment,
+        uniforms: {
+          uDensity: { value: null },
+          uColor: { value: new THREE.Vector3(1, 0, 0) },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+          uAspect: { value: aspect },
+        },
+      });
+
+      // Splat shader for velocity (radial push out with noise for flare-like effect, stronger strength)
+      const splatVelocityFragment = `
+            uniform sampler2D uVelocity;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            uniform float uStrength;
+            uniform float uAspect;
+            uniform float uTime;
+            varying vec2 vUv;
+            ${simplexNoise}
+            void main() {
+                vec4 current = texture2D(uVelocity, vUv);
+                vec2 dir = vUv - uCenter;
+                dir.x *= uAspect;
+                float d = length(dir);
+                if (d < uRadius && d > 0.001) {
+                    vec2 normDir = normalize(dir);
+                    float angle = atan(normDir.y, normDir.x);
+                    float noise = snoise(vec2(angle * 5.0, uTime * 0.5)) * 0.5 + 0.5; // Noise based on angle and time
+                    float flareFactor = pow(noise, 2.0); // Amplify noise for flare bursts
+                    vec2 addVel = normDir * uStrength * flareFactor * (1.0 - d / uRadius);
+                    current.xy += addVel;
+                }
+                gl_FragColor = current;
+            }
+        `;
+      const splatVelocityMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: splatVelocityFragment,
+        uniforms: {
+          uVelocity: { value: null },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+          uStrength: { value: 0.1 }, // Increased strength for more spread
+          uAspect: { value: aspect },
+          uTime: { value: 0.0 },
+        },
+      });
+
+      // Final render shader with black circle overlay
+      const finalFragment = `
+            uniform sampler2D uDensity;
+            uniform float uAspect;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            varying vec2 vUv;
+            void main() {
+                vec4 color = texture2D(uDensity, vUv);
+                vec2 p = vUv - uCenter;
+                p.x *= uAspect;
+                float d = length(p);
+                if (d < uRadius) {
+                    color = vec4(0.0, 0.0, 0.0, 1.0);
+                }
+                gl_FragColor = color;
+            }
+        `;
+      const finalMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: finalFragment,
+        uniforms: {
+          uDensity: { value: null },
+          uAspect: { value: aspect },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+        },
+      });
+      displayMesh.material = finalMaterial;
+
+      // Initialize buffers
+      function initBuffers() {
+        // Init velocity
+        simMesh.material = initVelocityShader;
+        renderer.setRenderTarget(velocity1);
+        renderer.render(simScene, camera);
+        velocity2.texture = velocity1.texture.clone();
+
+        // Init density
+        simMesh.material = initDensityShader;
+        renderer.setRenderTarget(density1);
+        renderer.render(simScene, camera);
+        density2.texture = density1.texture.clone();
+
+        // Init pressure to 0
+        renderer.setRenderTarget(pressure1);
+        renderer.clear();
+        pressure2.texture = pressure1.texture.clone();
+      }
+
+      initBuffers();
+
+      // Colors cycle
       const colors = [
-        { r: 0.867, g: 0.396, b: 0.251 }, // #DD6540
-        { r: 0.569, g: 0.325, b: 0.525 }, // #915386
-        { r: 0.004, g: 0.62, b: 0.592 }, // #019E97
-        { r: 0.431, g: 0.616, b: 0.333 }, // #6E9D55
+        new THREE.Vector3(221 / 255, 101 / 255, 64 / 255), // #DD6540
+        new THREE.Vector3(145 / 255, 83 / 255, 134 / 255), // #915386
+        new THREE.Vector3(1 / 255, 158 / 255, 151 / 255), // #019E97
+        new THREE.Vector3(110 / 255, 157 / 255, 85 / 255), // #6E9D55
       ];
 
-      // ノイズ関数を含むシェーダーコード
-      const noise = `
-        #define NORMALIZE_GRADIENTS
-        #undef USE_CIRCLE
-        #define COLLAPSE_SORTNET
+      const clock = new THREE.Clock();
+      let elapsed = 0;
 
-        float permute(float x0,vec3 p) {
-            float x1 = mod(x0 * p.y, p.x);
-            return floor(  mod( (x1 + p.z) *x0, p.x ));
-        }
-        vec2 permute(vec2 x0,vec3 p) {
-            vec2 x1 = mod(x0 * p.y, p.x);
-            return floor(  mod( (x1 + p.z) *x0, p.x ));
-        }
-        vec3 permute(vec3 x0,vec3 p) {
-            vec3 x1 = mod(x0 * p.y, p.x);
-            return floor(  mod( (x1 + p.z) *x0, p.x ));
-        }
-        vec4 permute(vec4 x0,vec3 p) {
-            vec4 x1 = mod(x0 * p.y, p.x);
-            return floor(  mod( (x1 + p.z) *x0, p.x ));
-        }
-
-        const vec4 pParam = vec4( 17.0*17.0, 34.0, 1.0, 7.0);
-
-        float taylorInvSqrt(float r) {
-            return ( 0.83666002653408 + 0.7*0.85373472095314 - 0.85373472095314 * r );
-        }
-
-        float simplexNoise2(vec2 v) {
-            const vec2 C = vec2(0.211324865405187134, 0.366025403784438597);
-            const vec3 D = vec3( 0., 0.5, 2.0) * 3.14159265358979312;
-            vec2 i  = floor(v + dot(v, C.yy) );
-            vec2 x0 = v -   i + dot(i, C.xx);
-            vec2 i1  =  (x0.x > x0.y) ? vec2(1.,0.) : vec2(0.,1.) ;
-            vec2 x1 = x0 - i1 + 1. * C.xx ;
-            vec2 x2 = x0 - 1. + 2. * C.xx ;
-            i = mod(i, pParam.x);
-            vec3 p = permute( permute(
-                i.y + vec3(0., i1.y, 1. ), pParam.xyz)
-                + i.x + vec3(0., i1.x, 1. ), pParam.xyz);
-            vec3 x = fract(p / pParam.w) ;
-            vec3 h = 0.5 - abs(x) ;
-            vec3 sx = vec3(lessThan(x,D.xxx)) *2. -1.;
-            vec3 sh = vec3(lessThan(h,D.xxx));
-            vec3 a0 = x + sx*sh;
-            vec2 p0 = vec2(a0.x,h.x);
-            vec2 p1 = vec2(a0.y,h.y);
-            vec2 p2 = vec2(a0.z,h.z);
-            p0 *= taylorInvSqrt(dot(p0,p0));
-            p1 *= taylorInvSqrt(dot(p1,p1));
-            p2 *= taylorInvSqrt(dot(p2,p2));
-            vec3 g = 2.0 * vec3( dot(p0, x0), dot(p1, x1), dot(p2, x2) );
-            vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x1,x1), dot(x2,x2)), 0.);
-            m = m*m ;
-            return 1.66666* 70.*dot(m*m, g);
-        }
-
-        float v3n1(vec3 v) {
-            return simplexNoise2(v.xy);
-        }`;
-
-      const vert = `
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vUv = uv;
-            vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-            gl_Position = projectionMatrix * mvPosition;
-        }`;
-
-      const advectionFrag = `
-        uniform vec2 res;
-        uniform float speed;
-        uniform sampler2D tex;
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        void main() {
-            vec2 vel = texture2D(tex, wrap(vUv)).xy;
-            vec4 color = texture2D(tex, wrap(vUv + vel * speed / res));
-            gl_FragColor = color;
-        }`;
-
-      const divergenceFrag = `
-        uniform vec2 res;
-        uniform float speed;
-        uniform sampler2D tex;
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        vec2 u(vec2 coord) {
-            return texture2D(tex, wrap(coord)).xy;
-        }
-
-        void main() {
-            float rho = 1.0;
-            float deltaT = 1.0 / 60.0;
-            vec3 px = vec3(1.0 / res.x, 1.0 / res.y, 0.0) * speed;
-
-            float divergence =
-                (px.x * rho / deltaT) *
-                (
-                    (u(vUv - px.xz).x -
-                    u(vUv + px.xz).x)
-                    +
-                    (u(vUv - px.zy).y -
-                    u(vUv + px.zy).y)
-                );
-
-            gl_FragColor = vec4(divergence , 0.0, 0.0, 1.0);
-        }`;
-
-      const forceInitFrag =
-        noise +
-        `
-        uniform float seed;
-        uniform vec2 res;
-        uniform float time;
-        uniform float diffusion;
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        void main() {
-            // 中央の円から放射状に流れを生成
-            vec2 center = vec2(0.5, 0.5);
-            vec2 toCenter = vUv - center;
-            float dist = length(toCenter);
-
-            // 円の半径（画面の10%、つまり直径20%）
-            float radius = 0.1;
-
-            vec2 force = vec2(0.0);
-
-            if (dist < radius) {
-                // 円の内部から外側への放射状の力
-                float strength = (radius - dist) / radius;
-                force = normalize(toCenter) * strength * diffusion * 3.0;
-            }
-
-            // 軽いノイズを追加してより自然な流れに
-            float n0 = seed + 12.3 + time * 0.005;
-            float n1 = seed + 123.4 + time * 0.007;
-
-            vec2 v0 = vUv * res / 500.0;
-            vec2 v1 = vUv * res / 700.0;
-
-            float nr = v3n1(vec3(v0, n0)) * 0.1;
-            float ng = v3n1(vec3(v1, n1)) * 0.1;
-
-            force += vec2(nr, ng);
-
-            gl_FragColor = vec4(force, 0.0, 1.0);
-        }`;
-
-      const forceRenderFrag = `
-        varying vec2 vUv;
-        varying vec3 vNormal;
-        uniform sampler2D tex;
-
-        void main( void ) {
-            vec4 vel = texture2D(tex, vUv);
-            float magnitude = length(vel.xy);
-            vec3 color = vec3(magnitude * 2.0, magnitude * 0.5, magnitude);
-            gl_FragColor = vec4(color, 1.0);
-        }`;
-
-      const forceUpdateFrag = `
-        uniform vec2 res;
-        uniform float speed;
-        uniform sampler2D pressure;
-        uniform sampler2D advection;
-        uniform vec2 forcePoint;
-        uniform vec2 forceVector;
-        uniform float time;
-
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        float p(vec2 coord) {
-            return texture2D(pressure, wrap(coord)).x;
-        }
-
-        void main() {
-            float deltaT = 1.0 / 60.0;
-            float rho = 0.999;
-            vec3 px = vec3(1.0 / res.x, 1.0 / res.y, 0.0) * speed;
-            vec4 u_a = texture2D(advection, vUv);
-
-            float diff_p_x = (p(vUv + px.xz) - p(vUv - px.xz));
-            float u_x = u_a.x - deltaT / (2.0 * rho * px.x) * diff_p_x;
-            float diff_p_y = (p(vUv + px.zy) - p(vUv - px.zy));
-            float u_y = u_a.y - deltaT / (2.0 * rho * px.y) * diff_p_y;
-
-            // 外部からの力を追加
-            float dist = distance(vUv, forcePoint);
-            float influence = exp(-dist * dist * 200.0);
-            u_x += forceVector.x * influence;
-            u_y += forceVector.y * influence;
-
-            u_a = vec4(vec2(u_x, u_y) * 0.98, 0.0, 1.0);
-
-            gl_FragColor = u_a;
-        }`;
-
-      const pressureFrag =
-        noise +
-        `
-        uniform vec2 res;
-        uniform float speed;
-        uniform sampler2D tex;
-        uniform sampler2D divergence;
-
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        float d(vec2 coord) {
-            return texture2D(divergence, wrap(coord)).x;
-        }
-
-        float p(vec2 coord) {
-            return texture2D(tex, wrap(coord)).x;
-        }
-
-        void main() {
-            vec3 px = vec3(1.0 / res.x, 1.0 / res.y, 0.0) * speed;
-
-            float pressure = 0.25 * (d(vUv)
-            + p(vUv + px.xz)
-            + p(vUv - px.xz)
-            + p(vUv + px.zy)
-            + p(vUv - px.zy)
-            );
-
-            gl_FragColor = vec4(vec3(pressure), 1.0);
-        }`;
-
-      // 白背景から円の色を拡散させるペイントシェーダー
-      const paintInitFrag = `
-        uniform float seed;
-        uniform vec2 res;
-        uniform float time;
-        uniform vec3 circleColor;
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        void main() {
-            vec2 center = vec2(0.5, 0.5);
-            float dist = distance(vUv, center);
-            float radius = 0.1; // 円の半径（画面の10%、直径20%）
-
-            vec4 color;
-
-            if (dist <= radius) {
-                // 円の内部は指定された色
-                float fade = 1.0 - (dist / radius) * 0.3; // 中心ほど濃く
-                color = vec4(circleColor * fade, 1.0);
-            } else {
-                // 円の外部は白
-                color = vec4(1.0, 1.0, 1.0, 1.0);
-            }
-
-            gl_FragColor = color;
-        }`;
-
-      const paintRenderFrag = `
-        varying vec2 vUv;
-        varying vec3 vNormal;
-        uniform vec2 res;
-        uniform sampler2D tex;
-        uniform float colorIntensity;
-        uniform float time;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        void main( void ) {
-            vec4 color = texture2D(tex, vUv);
-
-            // 色の強度を調整
-            color.rgb *= colorIntensity;
-
-            // 少しコントラストを追加
-            color.rgb = pow(color.rgb, vec3(1.2));
-
-            gl_FragColor = vec4(color.rgb, 1.0);
-        }`;
-
-      const paintUpdateFrag = `
-        uniform vec2 res;
-        uniform float speed;
-        uniform sampler2D tex;
-        uniform sampler2D velocity;
-
-        varying vec2 vUv;
-        varying vec3 vNormal;
-
-        vec2 wrap(vec2 v) {
-            return vec2(fract(v.x), fract(v.y));
-        }
-
-        void main() {
-            vec3 px = vec3(1.0 / res.x, 1.0 / res.y, 0.0) * speed;
-            vec4 v = texture2D(velocity, vUv);
-            vec4 p = texture2D(tex, wrap(vUv + px.xy * v.xy));
-
-            // 色の減衰を抑制（白に戻りにくくする）
-            p.rgb *= 0.9995;
-
-            gl_FragColor = p;
-        }`;
-
-      // Fluid クラス
-      class Fluid {
-        constructor(context) {
-          this.context = context;
-          this.speed = params.speed;
-          this.forceInitMaterial = this.createShaderMaterial(forceInitFrag);
-          this.divergenceMaterial = this.createShaderMaterial(divergenceFrag);
-          this.advectionMaterial = this.createShaderMaterial(advectionFrag);
-          this.pressureMaterial = this.createShaderMaterial(pressureFrag);
-          this.updateMaterial = this.createShaderMaterial(forceUpdateFrag);
-          this.renderMaterial = this.createShaderMaterial(forceRenderFrag);
-          this.velocity = [
-            this.createRenderTarget(),
-            this.createRenderTarget(),
-          ];
-          this.pressure = [
-            this.createRenderTarget(),
-            this.createRenderTarget(),
-          ];
-          this.divergence = this.createRenderTarget();
-          this.advection = this.createRenderTarget();
-          this.blank = this.createRenderTarget();
-
-          this.mainScene = new THREE.Scene();
-          this.mainMesh = this.createMesh(
-            0,
-            0,
-            this.context.width,
-            this.context.height,
-          );
-          this.mainScene.add(this.mainMesh);
-
-          this.init();
-        }
-
-        init() {
-          this.velocityIndex = 0;
-          this.context.renderer.setRenderTarget(this.velocity[0]);
-          this.mainMesh.material = this.forceInitMaterial;
-          this.forceInitMaterial.uniforms.seed = {
-            value: Math.random() * 100.0,
-          };
-          this.forceInitMaterial.uniforms.time = { value: params.time };
-          this.forceInitMaterial.uniforms.diffusion = {
-            value: params.diffusion,
-          };
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        createShaderMaterial(frag) {
-          return new THREE.ShaderMaterial({
-            vertexShader: vert,
-            fragmentShader: frag,
-            uniforms: {
-              tex: { value: null },
-              res: { value: [this.context.width, this.context.height] },
-              speed: { value: this.speed },
-              time: { value: 0 },
-              forcePoint: { value: new THREE.Vector2(0.5, 0.5) },
-              forceVector: { value: new THREE.Vector2(0, 0) },
-              diffusion: { value: params.diffusion },
-            },
-          });
-        }
-
-        createRenderTarget() {
-          return new THREE.WebGLRenderTarget(
-            this.context.width,
-            this.context.height,
-            {
-              format: THREE.RGBAFormat,
-              type: THREE.FloatType,
-            },
-          );
-        }
-
-        createMesh(cx, cy, w, h) {
-          const geometry = new THREE.PlaneGeometry(w, h);
-          const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-          const mesh = new THREE.Mesh(geometry, material);
-          mesh.position.x = cx;
-          mesh.position.y = cy;
-          return mesh;
-        }
-
-        update(forcePoint, forceVector) {
-          this.updateAdvection();
-          this.updateDivergence();
-          this.updatePressure();
-          this.updateVelocity(forcePoint, forceVector);
-
-          // パラメータを更新
-          this.updateMaterial.uniforms.speed.value = params.speed;
-          this.forceInitMaterial.uniforms.diffusion.value = params.diffusion;
-        }
-
-        updateAdvection() {
-          this.context.renderer.setRenderTarget(this.advection);
-          this.mainMesh.material = this.advectionMaterial;
-          this.advectionMaterial.uniforms.tex = {
-            value: this.velocity[this.velocityIndex].texture,
-          };
-          this.advectionMaterial.uniforms.speed.value = params.speed;
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        updateDivergence() {
-          this.context.renderer.setRenderTarget(this.divergence);
-          this.mainMesh.material = this.divergenceMaterial;
-          this.divergenceMaterial.uniforms.tex = {
-            value: this.advection.texture,
-          };
-          this.divergenceMaterial.uniforms.speed.value = params.speed;
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        updatePressure() {
-          this.context.renderer.setRenderTarget(this.pressure[0]);
-          this.context.renderer.clear();
-          this.context.renderer.setRenderTarget(null);
-
-          for (let i = 0; i < 4; i++) {
-            let i0 = i % 2;
-            let i1 = (i + 1) % 2;
-            const prevPressure = this.pressure[i0];
-            const nextPressure = this.pressure[i1];
-
-            this.context.renderer.setRenderTarget(nextPressure);
-            this.mainMesh.material = this.pressureMaterial;
-            this.pressureMaterial.uniforms.tex = {
-              value: prevPressure.texture,
-            };
-            this.pressureMaterial.uniforms.divergence = {
-              value: this.divergence.texture,
-            };
-            this.pressureMaterial.uniforms.speed.value = params.speed;
-            this.context.renderer.render(this.mainScene, this.context.camera);
-            this.context.renderer.setRenderTarget(null);
-          }
-        }
-
-        updateVelocity(forcePoint, forceVector) {
-          const i1 = (this.velocityIndex + 1) % 2;
-          const nextVelocity = this.velocity[i1];
-          this.velocityIndex = i1;
-
-          this.context.renderer.setRenderTarget(nextVelocity);
-          this.mainMesh.material = this.updateMaterial;
-          this.updateMaterial.uniforms.pressure = {
-            value: this.pressure[1].texture,
-          };
-          this.updateMaterial.uniforms.advection = {
-            value: this.advection.texture,
-          };
-          this.updateMaterial.uniforms.forcePoint.value = forcePoint;
-          this.updateMaterial.uniforms.forceVector.value = forceVector;
-          this.updateMaterial.uniforms.time.value = params.time;
-          this.updateMaterial.uniforms.speed.value = params.speed;
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        draw() {
-          this.mainMesh.material = this.renderMaterial;
-          this.renderMaterial.uniforms.tex = {
-            value: this.getVelocity().texture,
-          };
-          this.context.renderer.render(this.mainScene, this.context.camera);
-        }
-
-        getVelocity() {
-          return this.velocity[this.velocityIndex];
-        }
-      }
-
-      // Paint クラス
-      class Paint {
-        constructor(context) {
-          this.context = context;
-          this.speed = params.speed;
-          this.initMaterial = this.createShaderMaterial(paintInitFrag);
-          this.updateMaterial = this.createShaderMaterial(paintUpdateFrag);
-          this.renderMaterial = this.createShaderMaterial(paintRenderFrag);
-          this.paint = [this.createRenderTarget(), this.createRenderTarget()];
-
-          this.mainScene = new THREE.Scene();
-          this.mainMesh = this.createMesh(
-            0,
-            0,
-            this.context.width,
-            this.context.height,
-          );
-          this.mainScene.add(this.mainMesh);
-
-          this.init();
-        }
-
-        init() {
-          this.paintIndex = 0;
-          this.context.renderer.setRenderTarget(this.paint[0]);
-          this.mainMesh.material = this.initMaterial;
-          this.initMaterial.uniforms.seed = { value: Math.random() * 100.0 };
-          this.initMaterial.uniforms.time = { value: params.time };
-
-          // 初期色を設定（最初の色）
-          const currentColor = colors[0];
-          this.initMaterial.uniforms.circleColor = {
-            value: new THREE.Vector3(
-              currentColor.r,
-              currentColor.g,
-              currentColor.b,
-            ),
-          };
-
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        createShaderMaterial(frag) {
-          return new THREE.ShaderMaterial({
-            vertexShader: vert,
-            fragmentShader: frag,
-            uniforms: {
-              tex: { value: null },
-              res: { value: [this.context.width, this.context.height] },
-              speed: { value: this.speed },
-              time: { value: 0 },
-              colorIntensity: { value: params.colorIntensity },
-              circleColor: { value: new THREE.Vector3(1, 1, 1) },
-            },
-          });
-        }
-
-        createRenderTarget() {
-          return new THREE.WebGLRenderTarget(
-            this.context.width,
-            this.context.height,
-            {
-              format: THREE.RGBAFormat,
-              type: THREE.FloatType,
-            },
-          );
-        }
-
-        createMesh(cx, cy, w, h) {
-          const geometry = new THREE.PlaneGeometry(w, h);
-          const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-          const mesh = new THREE.Mesh(geometry, material);
-          mesh.position.x = cx;
-          mesh.position.y = cy;
-          return mesh;
-        }
-
-        update(velocity) {
-          const i0 = this.paintIndex % 2;
-          const i1 = (this.paintIndex + 1) % 2;
-          const prevPaint = this.paint[i0];
-          const nextPaint = this.paint[i1];
-          this.paintIndex = i1;
-
-          this.context.renderer.setRenderTarget(nextPaint);
-          this.mainMesh.material = this.updateMaterial;
-          this.updateMaterial.uniforms.tex = { value: prevPaint.texture };
-          this.updateMaterial.uniforms.velocity = { value: velocity.texture };
-          this.updateMaterial.uniforms.speed.value = params.speed;
-          this.context.renderer.render(this.mainScene, this.context.camera);
-          this.context.renderer.setRenderTarget(null);
-        }
-
-        draw() {
-          this.mainMesh.material = this.renderMaterial;
-          this.renderMaterial.uniforms.tex = { value: this.getPaint().texture };
-          this.renderMaterial.uniforms.colorIntensity.value =
-            params.colorIntensity;
-          this.renderMaterial.uniforms.time.value = params.time;
-          this.context.renderer.render(this.mainScene, this.context.camera);
-        }
-
-        getPaint() {
-          return this.paint[this.paintIndex];
-        }
-
-        // 色を更新するメソッド
-        updateCircleColor() {
-          const colorIndex = Math.floor(params.time * 0.5) % colors.length; // 1秒ごと（time * 0.5で2秒に1回の変化を1秒に1回に）
-          const currentColor = colors[colorIndex];
-
-          this.initMaterial.uniforms.circleColor.value.set(
-            currentColor.r,
-            currentColor.g,
-            currentColor.b,
-          );
-        }
-      }
-
-      // 初期化
-      function init() {
-        const renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          preserveDrawingBuffer: true, // 画像保存のために必須
-          alpha: false,
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setClearColor(0xffffff, 1.0); // 白い背景
-        canvas = renderer.domElement;
-        document.body.appendChild(canvas);
-
-        const fov = 65;
-        const hFovRadian = (fov / 2 / 180) * Math.PI;
-        const cz = window.innerHeight / 2 / Math.tan(hFovRadian);
-
-        const camera = new THREE.PerspectiveCamera(
-          fov,
-          window.innerWidth / window.innerHeight,
-          0.1,
-          cz * 4,
-        );
-        camera.position.z = cz;
-
-        const context = {
-          renderer,
-          camera,
-          width: window.innerWidth,
-          height: window.innerHeight,
-        };
-
-        fluid = new Fluid(context);
-        paint = new Paint(context);
-      }
-
-      // アニメーションループ
-      async function animate() {
-        params.time += 0.02;
-
-        // 色のサイクル更新
-        paint.updateCircleColor();
-
-        // 定期的に円から新しい色を注入
-        if (count % 30 === 0) {
-          // 円の周囲の複数の点から色を押し出す
-          const angleStep = (Math.PI * 2) / 8;
-          for (let i = 0; i < 8; i++) {
-            const angle = i * angleStep + params.time * 0.1;
-            const radius = 0.08;
-            const x = 0.5 + Math.cos(angle) * radius;
-            const y = 0.5 + Math.sin(angle) * radius;
-
-            const forceX = Math.cos(angle) * 0.3;
-            const forceY = Math.sin(angle) * 0.3;
-
-            fluid.update(
-              new THREE.Vector2(x, y),
-              new THREE.Vector2(forceX, forceY),
-            );
-          }
-        } else {
-          fluid.update(new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0, 0));
-        }
-
-        count++;
-
-        // リセット間隔を長くする
-        if (count % 1200 == 0) {
-          fluid.init();
-          paint.init();
-        }
-
-        // クリアしてから描画
-        fluid.context.renderer.clear();
-        paint.update(fluid.getVelocity());
-        paint.draw();
-
+      function animate() {
         requestAnimationFrame(animate);
+        const dt = clock.getDelta();
+        elapsed += dt;
+
+        // Update time for noise
+        splatVelocityMaterial.uniforms.uTime.value = elapsed;
+
+        // Get current color index
+        const colorIndex = Math.floor(elapsed) % 4;
+        const currentColor = colors[colorIndex];
+
+        // Splat color to density
+        splatDensityMaterial.uniforms.uDensity.value = density1.texture;
+        splatDensityMaterial.uniforms.uColor.value = currentColor;
+        simMesh.material = splatDensityMaterial;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // Splat radial velocity with flare noise
+        splatVelocityMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = splatVelocityMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Advect velocity with reduced dissipation for more fluid-like behavior
+        advectionMaterial.uniforms.uTexture.value = velocity1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.5; // Scaled dt for faster spread
+        advectionMaterial.uniforms.uDissipation.value = 0.995;
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Compute divergence
+        divergenceMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = divergenceMaterial;
+        renderer.setRenderTarget(divergence);
+        renderer.render(simScene, camera);
+
+        // Compute pressure (increased iterations for better fluid stability)
+        let currentPressure = pressure1;
+        let nextPressure = pressure2;
+        for (let i = 0; i < 40; i++) {
+          // Increased to 40 for smoother fluid
+          pressureMaterial.uniforms.uPressure.value = currentPressure.texture;
+          pressureMaterial.uniforms.uDivergence.value = divergence.texture;
+          simMesh.material = pressureMaterial;
+          renderer.setRenderTarget(nextPressure);
+          renderer.render(simScene, camera);
+          [currentPressure, nextPressure] = [nextPressure, currentPressure];
+        }
+        pressure1 = currentPressure;
+
+        // Subtract gradient
+        gradientSubtractMaterial.uniforms.uPressure.value = pressure1.texture;
+        gradientSubtractMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = gradientSubtractMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Advect density with reduced dissipation to keep colors longer and scaled dt
+        advectionMaterial.uniforms.uTexture.value = density1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.5; // Scaled dt for faster spread
+        advectionMaterial.uniforms.uDissipation.value = 0.999; // Reduced dissipation
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // Render to screen with overlay
+        finalMaterial.uniforms.uDensity.value = density1.texture;
+        renderer.setRenderTarget(null);
+        renderer.render(displayScene, camera);
       }
 
-      // UIコントロール
-      const controls = {
-        speed: document.getElementById('speed'),
-        diffusion: document.getElementById('diffusion'),
-        colorIntensity: document.getElementById('color-intensity'),
-      };
-
-      controls.speed.addEventListener('input', (e) => {
-        params.speed = parseFloat(e.target.value);
-        document.getElementById('speed-value').textContent = e.target.value;
-      });
-
-      controls.diffusion.addEventListener('input', (e) => {
-        params.diffusion = parseFloat(e.target.value);
-        document.getElementById('diffusion-value').textContent = e.target.value;
-      });
-
-      controls.colorIntensity.addEventListener('input', (e) => {
-        params.colorIntensity = parseFloat(e.target.value);
-        document.getElementById('color-intensity-value').textContent =
-          e.target.value;
-      });
-
-      // リセットボタン
-      document.getElementById('reset').addEventListener('click', () => {
-        count = 0;
-        params.time = 0;
-        fluid.init();
-        paint.init();
-      });
-
-      // 画像保存機能
-      function captureImage() {
-        // レンダリングを確実に完了させる
-        if (fluid && paint) {
-          paint.draw();
-        }
-
-        // canvasから画像データを取得
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.download = `circle-art-${Date.now()}.png`;
-            link.href = url;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          } else {
-            // Blobが取得できない場合は従来の方法を試す
-            try {
-              const dataURL = canvas.toDataURL('image/png');
-              const link = document.createElement('a');
-              link.download = `circle-art-${Date.now()}.png`;
-              link.href = dataURL;
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            } catch (e) {
-              console.error('画像保存エラー:', e);
-              alert(
-                '画像の保存に失敗しました。ブラウザの設定を確認してください。',
-              );
-            }
-          }
-        }, 'image/png');
-      }
-
-      document.getElementById('capture').addEventListener('click', () => {
-        // 次のフレームで保存を実行（レンダリング完了を待つ）
-        requestAnimationFrame(() => {
-          captureImage();
-        });
-      });
-
-      // キーボードショートカット
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 's' || e.key === 'S') {
-          e.preventDefault(); // ブラウザのデフォルト動作を防ぐ
-          requestAnimationFrame(() => {
-            captureImage();
-          });
-        }
-      });
-
-      // リサイズ対応
-      window.addEventListener('resize', () => {
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-
-        if (fluid && paint) {
-          // 再初期化が必要
-          init();
-        }
-      });
-
-      // 開始
-      init();
       animate();
+
+      // Handle resize
+      window.addEventListener('resize', () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const newAspect = w / h;
+        renderer.setSize(w, h);
+        finalMaterial.uniforms.uAspect.value = newAspect;
+        splatDensityMaterial.uniforms.uAspect.value = newAspect;
+        splatVelocityMaterial.uniforms.uAspect.value = newAspect;
+      });
     </script>
   </body>
 </html>
