@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fluid Simulation Text Emitter — テキスト見本</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+      canvas {
+        display: block;
+      }
+      .ui {
+        position: fixed;
+        inset: 0 auto auto 0;
+        padding: 10px 12px;
+        font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+          'Noto Sans JP', Helvetica, Arial, 'Apple Color Emoji',
+          'Segoe UI Emoji';
+        color: #ddd;
+        background: linear-gradient(
+          90deg,
+          rgba(0, 0, 0, 0.6),
+          rgba(0, 0, 0, 0)
+        );
+        z-index: 10;
+      }
+      .ui input {
+        background: #111;
+        color: #eee;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 6px 10px;
+        min-width: 16rem;
+      }
+      .ui label {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-right: 8px;
+      }
+      .ui .hint {
+        font-size: 11px;
+        opacity: 0.6;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ui">
+      <label>テキストから色を放出：</label>
+      <input id="textInput" value="テキスト見本" />
+      <div class="hint">入力を変えると流体発生マスクが更新されます</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      // ===== Setup =====
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const aspect = width / height;
+      const simRes = 512; // simulation grid (square)
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: false,
+        alpha: false,
+        powerPreference: 'high-performance',
+      });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      document.body.appendChild(renderer.domElement);
+
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const quad = new THREE.PlaneBufferGeometry(2, 2);
+
+      const simScene = new THREE.Scene();
+      const displayScene = new THREE.Scene();
+      const simMesh = new THREE.Mesh(quad);
+      const displayMesh = new THREE.Mesh(quad);
+      simScene.add(simMesh);
+      displayScene.add(displayMesh);
+
+      // ===== Helpers =====
+      function createRenderTarget() {
+        return new THREE.WebGLRenderTarget(simRes, simRes, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.FloatType,
+          depthBuffer: false,
+          stencilBuffer: false,
+        });
+      }
+
+      // ===== Framebuffers =====
+      let velocity1 = createRenderTarget();
+      let velocity2 = createRenderTarget();
+      let density1 = createRenderTarget();
+      let density2 = createRenderTarget();
+      let pressure1 = createRenderTarget();
+      let pressure2 = createRenderTarget();
+      let divergence = createRenderTarget();
+
+      // ===== Shaders =====
+      const vertexShader = `
+        varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = vec4(position, 1.0); }
+      `;
+
+      // Simplex noise (2D)
+      const simplexNoise = `
+        vec3 mod289(vec3 x){return x - floor(x*(1.0/289.0))*289.0;}
+        vec2 mod289(vec2 x){return x - floor(x*(1.0/289.0))*289.0;}
+        vec3 permute(vec3 x){return mod289(((x*34.0)+1.0)*x);}
+        float snoise(vec2 v){
+          const vec4 C=vec4(0.211324865405187,0.366025403784439,-0.577350269189626,0.024390243902439);
+          vec2 i=floor(v+dot(v,C.yy));
+          vec2 x0=v-i+dot(i,C.xx);
+          vec2 i1 = (x0.x>x0.y)?vec2(1.0,0.0):vec2(0.0,1.0);
+          vec4 x12=x0.xyxy+C.xxzz; x12.xy-=i1; i=mod289(i);
+          vec3 p=permute(permute(i.y+vec3(0.0,i1.y,1.0))+i.x+vec3(0.0,i1.x,1.0));
+          vec3 m=max(0.5-vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+          m=m*m; m=m*m;
+          vec3 x=2.0*fract(p*C.www)-1.0; vec3 h=abs(x)-0.5; vec3 ox=floor(x+0.5); vec3 a0=x-ox;
+          m*=1.79284291400159-0.85373472095314*(a0*a0+h*h);
+          vec3 g; g.x=a0.x*x0.x+h.x*x0.y; g.yz=a0.yz*x12.xz+h.yz*x12.yw;
+          return 130.0*dot(m,g);
+        }
+      `;
+
+      // Initialize velocity (low random flow)
+      const initVelocityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          varying vec2 vUv; ${simplexNoise}
+          void main(){
+            float n1=snoise(vUv*8.0);
+            float n2=snoise(vUv*8.0+vec2(5.0));
+            vec2 vel = vec2(n1,n2)*0.03;
+            gl_FragColor = vec4(vel,0.0,0.0);
+          }
+        `,
+      });
+
+      // Initialize density to black
+      const initDensityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `varying vec2 vUv; void main(){ gl_FragColor=vec4(0.0,0.0,0.0,1.0);} `,
+      });
+
+      // Advection with dissipation
+      const advectionMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uTexture;
+          uniform sampler2D uVelocity;
+          uniform vec2 uResolution;
+          uniform float uDt;
+          uniform float uDissipation;
+          varying vec2 vUv;
+          vec4 bilerp(sampler2D tex, vec2 uv){
+            vec2 st=uv*uResolution-0.5; vec2 i=floor(st); vec2 f=fract(st);
+            vec4 a=texture2D(tex,(i+vec2(0.5,0.5))/uResolution);
+            vec4 b=texture2D(tex,(i+vec2(1.5,0.5))/uResolution);
+            vec4 c=texture2D(tex,(i+vec2(0.5,1.5))/uResolution);
+            vec4 d=texture2D(tex,(i+vec2(1.5,1.5))/uResolution);
+            return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+          }
+          void main(){
+            vec2 vel = texture2D(uVelocity,vUv).xy;
+            vec2 pos = vUv - vel*uDt;
+            gl_FragColor = bilerp(uTexture,pos) * uDissipation;
+          }
+        `,
+        uniforms: {
+          uTexture: { value: null },
+          uVelocity: { value: null },
+          uResolution: { value: new THREE.Vector2(simRes, simRes) },
+          uDt: { value: 0.016 },
+          uDissipation: { value: 1.0 },
+        },
+      });
+
+      // Divergence
+      const divergenceMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uVelocity; uniform vec2 uTexelSize; varying vec2 vUv;
+          void main(){
+            float L=texture2D(uVelocity, vUv-vec2(uTexelSize.x,0.0)).x;
+            float R=texture2D(uVelocity, vUv+vec2(uTexelSize.x,0.0)).x;
+            float B=texture2D(uVelocity, vUv-vec2(0.0,uTexelSize.y)).y;
+            float T=texture2D(uVelocity, vUv+vec2(0.0,uTexelSize.y)).y;
+            float div=0.5*(R-L+T-B);
+            gl_FragColor=vec4(div,0.0,0.0,1.0);
+          }
+        `,
+        uniforms: {
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Pressure (Jacobi)
+      const pressureMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uPressure; uniform sampler2D uDivergence; uniform vec2 uTexelSize; varying vec2 vUv;
+          void main(){
+            float L=texture2D(uPressure, vUv-vec2(uTexelSize.x,0.0)).x;
+            float R=texture2D(uPressure, vUv+vec2(uTexelSize.x,0.0)).x;
+            float B=texture2D(uPressure, vUv-vec2(0.0,uTexelSize.y)).x;
+            float T=texture2D(uPressure, vUv+vec2(0.0,uTexelSize.y)).x;
+            float div=texture2D(uDivergence, vUv).x;
+            float p=(L+R+B+T - div)*0.25; gl_FragColor=vec4(p,0.0,0.0,1.0);
+          }
+        `,
+        uniforms: {
+          uPressure: { value: null },
+          uDivergence: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Subtract pressure gradient
+      const gradientSubtractMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uPressure; uniform sampler2D uVelocity; uniform vec2 uTexelSize; varying vec2 vUv;
+          void main(){
+            float L=texture2D(uPressure, vUv-vec2(uTexelSize.x,0.0)).x;
+            float R=texture2D(uPressure, vUv+vec2(uTexelSize.x,0.0)).x;
+            float B=texture2D(uPressure, vUv-vec2(0.0,uTexelSize.y)).x;
+            float T=texture2D(uPressure, vUv+vec2(0.0,uTexelSize.y)).x;
+            vec2 vel = texture2D(uVelocity, vUv).xy;
+            vel.x -= 0.5*(R-L); vel.y -= 0.5*(T-B);
+            gl_FragColor = vec4(vel,0.0,1.0);
+          }
+        `,
+        uniforms: {
+          uPressure: { value: null },
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // === NEW: Text mask-driven splats ===
+      // The text mask texture (white text on black) emits both density and velocity outward from glyph edges.
+      const splatFromTextDensity = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uDensity; // current density
+          uniform sampler2D uMask;    // text luminance mask
+          uniform vec3 uColor;        // color to inject
+          uniform vec2 uTexelSize;    // 1/res
+          uniform float uIntensity;   // overall intensity
+          varying vec2 vUv;
+          ${simplexNoise}
+          void main(){
+            vec4 cur = texture2D(uDensity, vUv);
+            float m  = texture2D(uMask, vUv).r; // 0..1 text mask
+            if(m>0.001){
+              // Flicker with noise so emission sparkles
+              float n = snoise(vUv*10.0 + vec2(cur.r+cur.g, cur.b));
+              float a = clamp(m * (0.6 + 0.4*n), 0.0, 1.0);
+              cur.rgb = mix(cur.rgb, uColor, a * uIntensity);
+            }
+            gl_FragColor = cur;
+          }
+        `,
+        uniforms: {
+          uDensity: { value: null },
+          uMask: { value: null },
+          uColor: { value: new THREE.Vector3(1, 0, 0) },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+          uIntensity: { value: 1.0 },
+        },
+      });
+
+      const splatFromTextVelocity = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uVelocity;
+          uniform sampler2D uMask;     // text mask
+          uniform vec2 uTexelSize;     // for gradient
+          uniform float uStrength;     // base push strength
+          uniform float uTime;
+          varying vec2 vUv;
+          ${simplexNoise}
+          void main(){
+            vec4 cur = texture2D(uVelocity, vUv);
+            float l = texture2D(uMask, vUv - vec2(uTexelSize.x,0.0)).r;
+            float r = texture2D(uMask, vUv + vec2(uTexelSize.x,0.0)).r;
+            float b = texture2D(uMask, vUv - vec2(0.0,uTexelSize.y)).r;
+            float t = texture2D(uMask, vUv + vec2(0.0,uTexelSize.y)).r;
+            vec2 grad = vec2(r - l, t - b); // points from dark->bright
+            float edge = clamp(length(grad)*2.0, 0.0, 1.0); // stronger at edges
+            if(edge>0.0){
+              vec2 dir = normalize(grad + 1e-6); // outward normal from glyph edge
+              // add time-varying jitter so strokes breathe
+              float ang = atan(dir.y, dir.x);
+              float jitter = snoise(vec2(ang*6.0, uTime*0.6))*0.5+0.5;
+              vec2 add = dir * uStrength * edge * (0.7 + 0.6*jitter);
+              cur.xy += add;
+            }
+            gl_FragColor = cur;
+          }
+        `,
+        uniforms: {
+          uVelocity: { value: null },
+          uMask: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+          uStrength: { value: 0.12 },
+          uTime: { value: 0.0 },
+        },
+      });
+
+      // Final pass: just show density
+      const finalMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+          uniform sampler2D uDensity; varying vec2 vUv;
+          void main(){ gl_FragColor = texture2D(uDensity, vUv); }
+        `,
+        uniforms: { uDensity: { value: null } },
+      });
+      displayMesh.material = finalMaterial;
+
+      // ===== Text mask (Canvas2D -> CanvasTexture) =====
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = simRes;
+      maskCanvas.height = simRes;
+      const maskCtx = maskCanvas.getContext('2d');
+      const maskTexture = new THREE.CanvasTexture(maskCanvas);
+      maskTexture.minFilter = THREE.LinearFilter;
+      maskTexture.magFilter = THREE.LinearFilter;
+
+      function drawTextToMask(str) {
+        const ctx = maskCtx;
+        const S = simRes;
+        ctx.save();
+        ctx.clearRect(0, 0, S, S);
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, S, S);
+        ctx.fillStyle = 'white';
+        // Fit font size to canvas width (multi-byte safe)
+        let fontSize = Math.floor(S * 0.65); // start big
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Try different fonts, fallback chain supports Japanese
+        const family =
+          '900 100px "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Roboto, system-ui, sans-serif';
+        while (fontSize > 10) {
+          ctx.font = family.replace('100px', fontSize + 'px');
+          const w = ctx.measureText(str).width;
+          if (w <= S * 0.85) break; // leave margins
+          fontSize -= 6;
+        }
+        ctx.font = family.replace('100px', fontSize + 'px');
+        // Slight stroke to sharpen edges in mask
+        ctx.lineWidth = Math.max(2, Math.floor(fontSize * 0.03));
+        ctx.strokeStyle = 'white';
+        ctx.strokeText(str, S / 2, S / 2);
+        ctx.fillText(str, S / 2, S / 2);
+        ctx.restore();
+        maskTexture.needsUpdate = true;
+      }
+
+      const textInput = document.getElementById('textInput');
+      const defaultText = textInput ? textInput.value : 'テキスト見本';
+      drawTextToMask(defaultText);
+      if (textInput) {
+        textInput.addEventListener('input', (e) => {
+          drawTextToMask(e.target.value || ' ');
+        });
+      }
+
+      // ===== Init Buffers =====
+      function initBuffers() {
+        simMesh.material = initVelocityShader;
+        renderer.setRenderTarget(velocity1);
+        renderer.render(simScene, camera);
+        simMesh.material = initDensityShader;
+        renderer.setRenderTarget(density1);
+        renderer.render(simScene, camera);
+        renderer.setRenderTarget(pressure1);
+        renderer.clear();
+      }
+      initBuffers();
+
+      // ===== Colors (cycle) =====
+      const colors = [
+        new THREE.Vector3(221 / 255, 101 / 255, 64 / 255), // #DD6540
+        new THREE.Vector3(145 / 255, 83 / 255, 134 / 255), // #915386
+        new THREE.Vector3(1 / 255, 158 / 255, 151 / 255), // #019E97
+        new THREE.Vector3(110 / 255, 157 / 255, 85 / 255), // #6E9D55
+      ];
+
+      const clock = new THREE.Clock();
+      let elapsed = 0;
+
+      // ===== Main loop =====
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(0.033, clock.getDelta());
+        elapsed += dt;
+
+        // Update uniforms
+        splatFromTextVelocity.uniforms.uTime.value = elapsed;
+
+        // Current palette color
+        const cidx = Math.floor(elapsed) % colors.length;
+        const col = colors[cidx];
+
+        // 1) Emit density from text mask
+        splatFromTextDensity.uniforms.uDensity.value = density1.texture;
+        splatFromTextDensity.uniforms.uMask.value = maskTexture;
+        splatFromTextDensity.uniforms.uColor.value = col;
+        splatFromTextDensity.uniforms.uIntensity.value = 1.0;
+        simMesh.material = splatFromTextDensity;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // 2) Push velocity outward from glyph edges
+        splatFromTextVelocity.uniforms.uVelocity.value = velocity1.texture;
+        splatFromTextVelocity.uniforms.uMask.value = maskTexture;
+        simMesh.material = splatFromTextVelocity;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // 3) Advect velocity (slightly dissipative)
+        advectionMaterial.uniforms.uTexture.value = velocity1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.6;
+        advectionMaterial.uniforms.uDissipation.value = 0.995;
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // 4) Project (pressure solve)
+        divergenceMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = divergenceMaterial;
+        renderer.setRenderTarget(divergence);
+        renderer.render(simScene, camera);
+
+        let curP = pressure1,
+          nextP = pressure2;
+        for (let i = 0; i < 32; i++) {
+          pressureMaterial.uniforms.uPressure.value = curP.texture;
+          pressureMaterial.uniforms.uDivergence.value = divergence.texture;
+          simMesh.material = pressureMaterial;
+          renderer.setRenderTarget(nextP);
+          renderer.render(simScene, camera);
+          [curP, nextP] = [nextP, curP];
+        }
+        pressure1 = curP;
+
+        gradientSubtractMaterial.uniforms.uPressure.value = pressure1.texture;
+        gradientSubtractMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = gradientSubtractMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // 5) Advect density (keep color longer)
+        advectionMaterial.uniforms.uTexture.value = density1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.6;
+        advectionMaterial.uniforms.uDissipation.value = 0.999;
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // 6) Display
+        finalMaterial.uniforms.uDensity.value = density1.texture;
+        renderer.setRenderTarget(null);
+        renderer.render(displayScene, camera);
+      }
+      animate();
+
+      // ===== Resize =====
+      window.addEventListener('resize', () => {
+        const w = window.innerWidth,
+          h = window.innerHeight;
+        renderer.setSize(w, h);
+      });
+    </script>
+  </body>
+</html>
