@@ -735,10 +735,11 @@
           renderer.render(simScene, camera);
           [currentPressure, nextPressure] = [nextPressure, currentPressure];
         }
-        pressure1 = currentPressure;
+        // The final pressure result is now in the `currentPressure` buffer.
 
         // Subtract gradient
-        gradientSubtractMaterial.uniforms.uPressure.value = pressure1.texture;
+        gradientSubtractMaterial.uniforms.uPressure.value =
+          currentPressure.texture;
         gradientSubtractMaterial.uniforms.uVelocity.value = velocity1.texture;
         simMesh.material = gradientSubtractMaterial;
         renderer.setRenderTarget(velocity2);
