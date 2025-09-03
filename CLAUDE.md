@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a cyberpunk-style fluid simulation built with Three.js and WebGL shaders. The project consists of a single HTML file with embedded JavaScript that creates an interactive fluid simulation with particle rendering.
+This is a cyberpunk-style fluid simulation built with Three.js and WebGL shaders. The project consists of HTML files in the `public/` directory with embedded JavaScript that creates interactive fluid simulations with particle rendering.
 
 ## Architecture
 
 ### Core Components
 
-1. **Fluid Class** (`index.html:604-780`)
+1. **Fluid Class** (`public/1.html` and `public/2.html`)
    - Handles fluid dynamics simulation using WebGL shaders
    - Manages velocity fields, pressure calculations, and advection
    - Implements incompressible Navier-Stokes equations
 
-2. **Paint Class** (`index.html:783-876`)
+2. **Paint Class** (`public/1.html` and `public/2.html`)
    - Renders visual representation of the fluid
    - Handles cyberpunk-style color mixing and effects
    - Manages particle rendering with bloom effects
@@ -39,10 +39,11 @@ The simulation uses multiple WebGL shaders for different stages:
 
 ## Development Commands
 
-Since this is a single HTML file project, there are no build commands. Simply:
+Since this is a static HTML files project, there are no build commands. Simply:
 
-1. **Run the simulation**: Open `index.html` in a web browser
+1. **Run the simulation**: Open any HTML file in the `public/` directory in a web browser
 2. **Development**: Use a local server for development (e.g., `python -m http.server`)
+3. **Deployment**: GitHub Pages automatically deploys from the `public/` directory via GitHub Actions
 
 ## Controls
 
