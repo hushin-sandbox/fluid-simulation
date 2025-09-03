@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fluid Simulation Generative Art</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #000;
+        font-family: 'Courier New', monospace;
+      }
+      canvas {
+        display: block;
+      }
+
+      .controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 15px;
+        border-radius: 10px;
+        color: #00e5ff;
+        border: 2px solid #00e5ff;
+        box-shadow: 0 0 20px rgba(0, 229, 255, 0.5);
+        width: 280px;
+      }
+
+      .controls h3 {
+        margin: 0 0 15px 0;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        text-shadow: 0 0 10px currentColor;
+      }
+
+      .control-group {
+        margin: 10px 0;
+      }
+
+      .control-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 12px;
+        color: #fff200;
+        text-shadow: 0 0 5px currentColor;
+      }
+
+      .control-group input[type='range'] {
+        width: 100%;
+        -webkit-appearance: none;
+        height: 5px;
+        background: linear-gradient(90deg, #ff2ed1, #00e5ff, #00ff8c);
+        outline: none;
+        border-radius: 5px;
+      }
+
+      .control-group input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 15px;
+        height: 15px;
+        background: #fff200;
+        cursor: pointer;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #fff200;
+      }
+
+      button {
+        width: 100%;
+        padding: 10px;
+        margin: 5px 0;
+        background: linear-gradient(45deg, #ff2ed1, #3f48ff);
+        border: none;
+        color: white;
+        font-weight: bold;
+        border-radius: 5px;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: all 0.3s;
+        font-family: 'Courier New', monospace;
+      }
+
+      button:hover {
+        transform: scale(1.05);
+        box-shadow: 0 0 20px rgba(255, 46, 209, 0.5);
+      }
+
+      .info {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        color: #00ff8c;
+        font-size: 14px;
+        text-shadow: 0 0 10px currentColor;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #00ff8c;
+      }
+
+      .value-display {
+        color: #ff8a00;
+        float: right;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="controls">
+      <h3>流体パラメータ</h3>
+
+      <div class="control-group">
+        <label
+          >速度倍率
+          <span class="value-display" id="speed-value">1.5</span></label
+        >
+        <input
+          type="range"
+          id="speed"
+          min="0.5"
+          max="3"
+          step="0.1"
+          value="1.5"
+        />
+      </div>
+
+      <div class="control-group">
+        <label
+          >消散係数
+          <span class="value-display" id="dissipation-value">0.995</span></label
+        >
+        <input
+          type="range"
+          id="dissipation"
+          min="0.98"
+          max="1.0"
+          step="0.005"
+          value="0.995"
+        />
+      </div>
+
+      <div class="control-group">
+        <label
+          >カラー強度
+          <span class="value-display" id="color-intensity-value"
+            >1.0</span
+          ></label
+        >
+        <input
+          type="range"
+          id="color-intensity"
+          min="0.5"
+          max="3"
+          step="0.1"
+          value="1.0"
+        />
+      </div>
+
+      <div class="control-group">
+        <label
+          >圧力計算回数
+          <span class="value-display" id="pressure-iterations-value"
+            >40</span
+          ></label
+        >
+        <input
+          type="range"
+          id="pressure-iterations"
+          min="10"
+          max="80"
+          step="5"
+          value="40"
+        />
+      </div>
+
+      <button id="reset">リセット</button>
+      <button id="capture">画像を保存 (Sキー)</button>
+      <div
+        style="
+          margin-top: 10px;
+          font-size: 11px;
+          color: #00ff8c;
+          text-align: center;
+        "
+      >
+        ※保存がうまくいかない場合は<br />右クリック→「画像を保存」でも可能
+      </div>
+    </div>
+
+    <div class="info">
+      放射流体シミュレーション実行中 | Sキーで画像保存<br />
+      <span style="font-size: 12px; opacity: 0.8"
+        >※保存できない場合は右クリック→「画像を保存」</span
+      >
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      // Setup
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const aspect = width / height;
+      const simRes = 512; // Simulation resolution (square for simplicity)
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        preserveDrawingBuffer: true, // 画像保存のために必須
+        alpha: false,
+      });
+      renderer.setSize(width, height);
+      let canvas = renderer.domElement;
+      document.body.appendChild(canvas);
+
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      const quad = new THREE.PlaneBufferGeometry(2, 2);
+
+      // Scenes
+      const simScene = new THREE.Scene();
+      const displayScene = new THREE.Scene();
+
+      const simMesh = new THREE.Mesh(quad);
+      simScene.add(simMesh);
+
+      const displayMesh = new THREE.Mesh(quad);
+      displayScene.add(displayMesh);
+
+      // Helper functions
+      function createRenderTarget() {
+        return new THREE.WebGLRenderTarget(simRes, simRes, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.FloatType,
+        });
+      }
+
+      // Buffers
+      let velocity1 = createRenderTarget();
+      let velocity2 = createRenderTarget();
+      let density1 = createRenderTarget();
+      let density2 = createRenderTarget();
+      let pressure1 = createRenderTarget();
+      let pressure2 = createRenderTarget();
+      let divergence = createRenderTarget();
+
+      // Shaders
+      const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+      // Simplex noise
+      const simplexNoise = `
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+
+            float snoise(vec2 v) {
+                const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                    -0.577350269189626, 0.024390243902439);
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v -   i + dot(i, C.xx);
+                vec2 i1;
+                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                vec4 x12 = x0.xyxy + C.xxzz;
+                x12.xy -= i1;
+                i = mod289(i);
+                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
+                + i.x + vec3(0.0, i1.x, 1.0 ));
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+                    dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ;
+                m = m*m ;
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+                vec3 g;
+                g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                return 130.0 * dot(m, g);
+            }
+        `;
+
+      // Initial velocity shader (random flow)
+      const initVelocityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+                varying vec2 vUv;
+                ${simplexNoise}
+                void main() {
+                    float n1 = snoise(vUv * 10.0);
+                    float n2 = snoise(vUv * 10.0 + vec2(5.0));
+                    vec2 vel = vec2(n1, n2) * 0.05; // Small random velocity
+                    gl_FragColor = vec4(vel, 0.0, 0.0);
+                }
+            `,
+        uniforms: {},
+      });
+
+      // Initial density (black)
+      const initDensityShader = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: `
+                varying vec2 vUv;
+                void main() {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                }
+            `,
+        uniforms: {},
+      });
+
+      // Advection shader with dissipation
+      const advectionFragment = `
+            uniform sampler2D uTexture;
+            uniform sampler2D uVelocity;
+            uniform vec2 uResolution;
+            uniform float uDt;
+            uniform float uDissipation;
+            varying vec2 vUv;
+
+            vec4 bilerp(sampler2D tex, vec2 uv) {
+                vec2 st = uv * uResolution - 0.5;
+                vec2 i = floor(st);
+                vec2 f = fract(st);
+                vec4 a = texture2D(tex, (i + vec2(0.5, 0.5)) / uResolution);
+                vec4 b = texture2D(tex, (i + vec2(1.5, 0.5)) / uResolution);
+                vec4 c = texture2D(tex, (i + vec2(0.5, 1.5)) / uResolution);
+                vec4 d = texture2D(tex, (i + vec2(1.5, 1.5)) / uResolution);
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
+
+            void main() {
+                vec2 vel = texture2D(uVelocity, vUv).xy;
+                vec2 pos = vUv - vel * uDt;
+                gl_FragColor = bilerp(uTexture, pos) * uDissipation;
+            }
+        `;
+      const advectionMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: advectionFragment,
+        uniforms: {
+          uTexture: { value: null },
+          uVelocity: { value: null },
+          uResolution: { value: new THREE.Vector2(simRes, simRes) },
+          uDt: { value: 0.016 },
+          uDissipation: { value: 0.995 },
+        },
+      });
+
+      // Divergence shader
+      const divergenceFragment = `
+            uniform sampler2D uVelocity;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uVelocity, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uVelocity, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uVelocity, vUv - vec2(0.0, uTexelSize.y)).y;
+                float T = texture2D(uVelocity, vUv + vec2(0.0, uTexelSize.y)).y;
+                float div = 0.5 * (R - L + T - B);
+                gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
+            }
+        `;
+      const divergenceMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: divergenceFragment,
+        uniforms: {
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Jacobi pressure shader
+      const pressureFragment = `
+            uniform sampler2D uPressure;
+            uniform sampler2D uDivergence;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
+                float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
+                float div = texture2D(uDivergence, vUv).x;
+                float p = (L + R + B + T - div) * 0.25;
+                gl_FragColor = vec4(p, 0.0, 0.0, 1.0);
+            }
+        `;
+      const pressureMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: pressureFragment,
+        uniforms: {
+          uPressure: { value: null },
+          uDivergence: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Gradient subtract shader
+      const gradientSubtractFragment = `
+            uniform sampler2D uPressure;
+            uniform sampler2D uVelocity;
+            uniform vec2 uTexelSize;
+            varying vec2 vUv;
+            void main() {
+                float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
+                float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
+                float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
+                float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
+                vec2 vel = texture2D(uVelocity, vUv).xy;
+                vel.x -= 0.5 * (R - L);
+                vel.y -= 0.5 * (T - B);
+                gl_FragColor = vec4(vel, 0.0, 1.0);
+            }
+        `;
+      const gradientSubtractMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: gradientSubtractFragment,
+        uniforms: {
+          uPressure: { value: null },
+          uVelocity: { value: null },
+          uTexelSize: { value: new THREE.Vector2(1 / simRes, 1 / simRes) },
+        },
+      });
+
+      // Splat shader for density (add color with stronger intensity)
+      const splatDensityFragment = `
+            uniform sampler2D uDensity;
+            uniform vec3 uColor;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            uniform float uAspect;
+            uniform float uIntensity;
+            varying vec2 vUv;
+            void main() {
+                vec4 current = texture2D(uDensity, vUv);
+                vec2 p = vUv - uCenter;
+                p.x *= uAspect;
+                float d = length(p);
+                if (d < uRadius) {
+                    float a = exp(-d * d / (uRadius * uRadius)) * uIntensity;
+                    current.rgb = mix(current.rgb, uColor, a);
+                }
+                gl_FragColor = current;
+            }
+        `;
+      const splatDensityMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: splatDensityFragment,
+        uniforms: {
+          uDensity: { value: null },
+          uColor: { value: new THREE.Vector3(1, 0, 0) },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+          uAspect: { value: aspect },
+          uIntensity: { value: 1.0 },
+        },
+      });
+
+      // Splat shader for velocity (radial push out with noise for flare-like effect, stronger strength)
+      const splatVelocityFragment = `
+            uniform sampler2D uVelocity;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            uniform float uStrength;
+            uniform float uAspect;
+            uniform float uTime;
+            uniform float uSpeedMultiplier;
+            varying vec2 vUv;
+            ${simplexNoise}
+            void main() {
+                vec4 current = texture2D(uVelocity, vUv);
+                vec2 dir = vUv - uCenter;
+                dir.x *= uAspect;
+                float d = length(dir);
+                if (d < uRadius && d > 0.001) {
+                    vec2 normDir = normalize(dir);
+                    float angle = atan(normDir.y, normDir.x);
+                    float noise = snoise(vec2(angle * 5.0, uTime * 0.5)) * 0.5 + 0.5; // Noise based on angle and time
+                    float flareFactor = pow(noise, 2.0); // Amplify noise for flare bursts
+                    vec2 addVel = normDir * uStrength * flareFactor * (1.0 - d / uRadius) * uSpeedMultiplier;
+                    current.xy += addVel;
+                }
+                gl_FragColor = current;
+            }
+        `;
+      const splatVelocityMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: splatVelocityFragment,
+        uniforms: {
+          uVelocity: { value: null },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+          uStrength: { value: 0.1 }, // Increased strength for more spread
+          uAspect: { value: aspect },
+          uTime: { value: 0.0 },
+          uSpeedMultiplier: { value: 1.5 },
+        },
+      });
+
+      // Final render shader with black circle overlay
+      const finalFragment = `
+            uniform sampler2D uDensity;
+            uniform float uAspect;
+            uniform vec2 uCenter;
+            uniform float uRadius;
+            varying vec2 vUv;
+            void main() {
+                vec4 color = texture2D(uDensity, vUv);
+                vec2 p = vUv - uCenter;
+                p.x *= uAspect;
+                float d = length(p);
+                if (d < uRadius) {
+                    color = vec4(0.0, 0.0, 0.0, 1.0);
+                }
+                gl_FragColor = color;
+            }
+        `;
+      const finalMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: finalFragment,
+        uniforms: {
+          uDensity: { value: null },
+          uAspect: { value: aspect },
+          uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uRadius: { value: 0.1 },
+        },
+      });
+      displayMesh.material = finalMaterial;
+
+      // Initialize buffers
+      function initBuffers() {
+        // Init velocity for both buffers
+        simMesh.material = initVelocityShader;
+        renderer.setRenderTarget(velocity1);
+        renderer.render(simScene, camera);
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+
+        // Init density for both buffers (black background)
+        simMesh.material = initDensityShader;
+        renderer.setRenderTarget(density1);
+        renderer.render(simScene, camera);
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+
+        // Init pressure to 0 for both buffers
+        renderer.setRenderTarget(pressure1);
+        renderer.clear();
+        renderer.setRenderTarget(pressure2);
+        renderer.clear();
+
+        // Reset render target
+        renderer.setRenderTarget(null);
+      }
+
+      initBuffers();
+
+      // Colors cycle
+      const colors = [
+        new THREE.Vector3(78 / 255, 121 / 255, 167 / 255), // #4E79A7 → 落ち着いたブルー
+        new THREE.Vector3(242 / 255, 142 / 255, 43 / 255), // #F28E2B → 明るいオレンジ
+        new THREE.Vector3(225 / 255, 87 / 255, 89 / 255), // #E15759 → ビビッドレッド
+        new THREE.Vector3(118 / 255, 183 / 255, 178 / 255), // #76B7B2 → 爽やかなターコイズ
+      ];
+
+      const clock = new THREE.Clock();
+      let elapsed = 0;
+
+      // Parameters
+      let params = {
+        speedMultiplier: 1.5,
+        dissipation: 0.995,
+        colorIntensity: 1.0,
+        pressureIterations: 40,
+      };
+
+      // UI Controls
+      const controls = {
+        speed: document.getElementById('speed'),
+        dissipation: document.getElementById('dissipation'),
+        colorIntensity: document.getElementById('color-intensity'),
+        pressureIterations: document.getElementById('pressure-iterations'),
+      };
+
+      controls.speed.addEventListener('input', (e) => {
+        params.speedMultiplier = parseFloat(e.target.value);
+        splatVelocityMaterial.uniforms.uSpeedMultiplier.value =
+          params.speedMultiplier;
+        document.getElementById('speed-value').textContent = e.target.value;
+      });
+
+      controls.dissipation.addEventListener('input', (e) => {
+        params.dissipation = parseFloat(e.target.value);
+        advectionMaterial.uniforms.uDissipation.value = params.dissipation;
+        document.getElementById('dissipation-value').textContent =
+          e.target.value;
+      });
+
+      controls.colorIntensity.addEventListener('input', (e) => {
+        params.colorIntensity = parseFloat(e.target.value);
+        splatDensityMaterial.uniforms.uIntensity.value = params.colorIntensity;
+        document.getElementById('color-intensity-value').textContent =
+          e.target.value;
+      });
+
+      controls.pressureIterations.addEventListener('input', (e) => {
+        params.pressureIterations = parseInt(e.target.value);
+        document.getElementById('pressure-iterations-value').textContent =
+          e.target.value;
+      });
+
+      // Reset button
+      document.getElementById('reset').addEventListener('click', () => {
+        // Reset elapsed time
+        elapsed = 0;
+        clock.getDelta(); // Reset clock delta
+
+        // Reinitialize buffers (this will clear and reset all render targets)
+        initBuffers();
+      });
+
+      // Screenshot functionality
+      function captureImage() {
+        // Ensure rendering is complete
+        renderer.setRenderTarget(null);
+        renderer.render(displayScene, camera);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = `radial-fluid-sim-${Date.now()}.png`;
+            link.href = url;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          } else {
+            // Fallback method
+            try {
+              const dataURL = canvas.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.download = `radial-fluid-sim-${Date.now()}.png`;
+              link.href = dataURL;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            } catch (e) {
+              console.error('Screenshot error:', e);
+              alert(
+                '画像の保存に失敗しました。ブラウザの設定を確認してください。',
+              );
+            }
+          }
+        }, 'image/png');
+      }
+
+      document.getElementById('capture').addEventListener('click', () => {
+        requestAnimationFrame(() => {
+          captureImage();
+        });
+      });
+
+      // Keyboard shortcut
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 's' || e.key === 'S') {
+          e.preventDefault();
+          requestAnimationFrame(() => {
+            captureImage();
+          });
+        }
+      });
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = clock.getDelta();
+        elapsed += dt;
+
+        // Update time for noise
+        splatVelocityMaterial.uniforms.uTime.value = elapsed;
+
+        // Get current color index
+        const colorIndex = Math.floor(elapsed) % 4;
+        const currentColor = colors[colorIndex];
+
+        // Splat color to density
+        splatDensityMaterial.uniforms.uDensity.value = density1.texture;
+        splatDensityMaterial.uniforms.uColor.value = currentColor;
+        simMesh.material = splatDensityMaterial;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // Splat radial velocity with flare noise
+        splatVelocityMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = splatVelocityMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Advect velocity with reduced dissipation for more fluid-like behavior
+        advectionMaterial.uniforms.uTexture.value = velocity1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.5; // Scaled dt for faster spread
+        advectionMaterial.uniforms.uDissipation.value = 0.995;
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Compute divergence
+        divergenceMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = divergenceMaterial;
+        renderer.setRenderTarget(divergence);
+        renderer.render(simScene, camera);
+
+        // Compute pressure (iterations based on parameter)
+        let currentPressure = pressure1;
+        let nextPressure = pressure2;
+        for (let i = 0; i < params.pressureIterations; i++) {
+          pressureMaterial.uniforms.uPressure.value = currentPressure.texture;
+          pressureMaterial.uniforms.uDivergence.value = divergence.texture;
+          simMesh.material = pressureMaterial;
+          renderer.setRenderTarget(nextPressure);
+          renderer.render(simScene, camera);
+          [currentPressure, nextPressure] = [nextPressure, currentPressure];
+        }
+        // The final pressure result is now in the `currentPressure` buffer.
+
+        // Subtract gradient
+        gradientSubtractMaterial.uniforms.uPressure.value =
+          currentPressure.texture;
+        gradientSubtractMaterial.uniforms.uVelocity.value = velocity1.texture;
+        simMesh.material = gradientSubtractMaterial;
+        renderer.setRenderTarget(velocity2);
+        renderer.render(simScene, camera);
+        [velocity1, velocity2] = [velocity2, velocity1];
+
+        // Advect density with reduced dissipation to keep colors longer and scaled dt
+        advectionMaterial.uniforms.uTexture.value = density1.texture;
+        advectionMaterial.uniforms.uVelocity.value = velocity1.texture;
+        advectionMaterial.uniforms.uDt.value = dt * 1.5; // Scaled dt for faster spread
+        advectionMaterial.uniforms.uDissipation.value = 0.999; // Reduced dissipation
+        simMesh.material = advectionMaterial;
+        renderer.setRenderTarget(density2);
+        renderer.render(simScene, camera);
+        [density1, density2] = [density2, density1];
+
+        // Render to screen with overlay
+        finalMaterial.uniforms.uDensity.value = density1.texture;
+        renderer.setRenderTarget(null);
+        renderer.render(displayScene, camera);
+      }
+
+      animate();
+
+      // Handle resize
+      window.addEventListener('resize', () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const newAspect = w / h;
+        renderer.setSize(w, h);
+        finalMaterial.uniforms.uAspect.value = newAspect;
+        splatDensityMaterial.uniforms.uAspect.value = newAspect;
+        splatVelocityMaterial.uniforms.uAspect.value = newAspect;
+        // Reinitialize buffers for new size
+        initBuffers();
+      });
+    </script>
+  </body>
+</html>
