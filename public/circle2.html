@@ -230,12 +230,15 @@
 
       // Helper functions
       function createRenderTarget() {
-        return new THREE.WebGLRenderTarget(simRes, simRes, {
+        const rt = new THREE.WebGLRenderTarget(simRes, simRes, {
           minFilter: THREE.LinearFilter,
           magFilter: THREE.LinearFilter,
           format: THREE.RGBAFormat,
           type: THREE.FloatType,
         });
+        rt.texture.wrapS = THREE.RepeatWrapping;
+        rt.texture.wrapT = THREE.RepeatWrapping;
+        return rt;
       }
 
       // Buffers
@@ -322,26 +325,15 @@
       const advectionFragment = `
             uniform sampler2D uTexture;
             uniform sampler2D uVelocity;
-            uniform vec2 uResolution;
             uniform float uDt;
             uniform float uDissipation;
             varying vec2 vUv;
 
-            vec4 bilerp(sampler2D tex, vec2 uv) {
-                vec2 st = uv * uResolution - 0.5;
-                vec2 i = floor(st);
-                vec2 f = fract(st);
-                vec4 a = texture2D(tex, (i + vec2(0.5, 0.5)) / uResolution);
-                vec4 b = texture2D(tex, (i + vec2(1.5, 0.5)) / uResolution);
-                vec4 c = texture2D(tex, (i + vec2(0.5, 1.5)) / uResolution);
-                vec4 d = texture2D(tex, (i + vec2(1.5, 1.5)) / uResolution);
-                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-            }
-
             void main() {
                 vec2 vel = texture2D(uVelocity, vUv).xy;
                 vec2 pos = vUv - vel * uDt;
-                gl_FragColor = bilerp(uTexture, pos) * uDissipation;
+                // texture2D with RepeatWrapping will handle border wrapping
+                gl_FragColor = texture2D(uTexture, pos) * uDissipation;
             }
         `;
       const advectionMaterial = new THREE.ShaderMaterial({
@@ -350,7 +342,6 @@
         uniforms: {
           uTexture: { value: null },
           uVelocity: { value: null },
-          uResolution: { value: new THREE.Vector2(simRes, simRes) },
           uDt: { value: 0.016 },
           uDissipation: { value: 0.995 },
         },
@@ -507,7 +498,7 @@
         },
       });
 
-      // Final render shader with black circle overlay
+      // Final render shader with anti-aliased white circle overlay
       const finalFragment = `
             uniform sampler2D uDensity;
             uniform float uAspect;
@@ -519,10 +510,13 @@
                 vec2 p = vUv - uCenter;
                 p.x *= uAspect;
                 float d = length(p);
-                if (d < uRadius) {
-                    color = vec4(0.0, 0.0, 0.0, 1.0);
-                }
-                gl_FragColor = color;
+
+                // Anti-aliased white circle
+                float edgeWidth = 0.005;
+                float circleAlpha = smoothstep(uRadius, uRadius - edgeWidth, d);
+
+                // Mix the original color with white based on the circle's alpha
+                gl_FragColor = mix(color, vec4(0.0, 0.0, 0.0, 1.0), circleAlpha);
             }
         `;
       const finalMaterial = new THREE.ShaderMaterial({
@@ -532,7 +526,7 @@
           uDensity: { value: null },
           uAspect: { value: aspect },
           uCenter: { value: new THREE.Vector2(0.5, 0.5) },
-          uRadius: { value: 0.1 },
+          uRadius: { value: 0.11 },
         },
       });
       displayMesh.material = finalMaterial;
